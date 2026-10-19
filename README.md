@@ -25,7 +25,6 @@ This is just the Oculus specific stuff, so dont bother reading if u wanna stay o
 X = T
 
 Y = Tab
-
 ---
 
 Right Controller:
