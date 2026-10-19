@@ -1,0 +1,10 @@
+^C:\USERS\RICHI\DOWNLOADS\HALF-LIFE-ALYX-NOVR-1.2\HALF-LIFE-ALYX-NOVR-1.2\SOURCE\STEAMVR\SAMPLES\DRIVER_SAMPLE\BUILD\CMAKEFILES\3E599F90A12F80C79891C393AA29FE22\GENERATE.STAMP.RULE
+setlocal
+"D:\Program Files\CMake\bin\cmake.exe" -SC:/Users/richi/Downloads/Half-Life-Alyx-novr-1.2/Half-Life-Alyx-novr-1.2/Source/SteamVR/samples/driver_sample -BC:/Users/richi/Downloads/Half-Life-Alyx-novr-1.2/Half-Life-Alyx-novr-1.2/Source/SteamVR/samples/driver_sample/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/richi/Downloads/Half-Life-Alyx-novr-1.2/Half-Life-Alyx-novr-1.2/Source/SteamVR/samples/driver_sample/build/driver_sample.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
