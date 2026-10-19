@@ -48,7 +48,8 @@ A = G
 
 B = R
 
-Literally moving the hands?:
+Moving the hands?:
+---
 
 X = Left hand edit
 
