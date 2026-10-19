@@ -6,7 +6,7 @@ The modifications in question is literally just making it as similar to this Bon
 Also, ill just be blunt and honest right now, i used DeepSeek to code ALL of this, while i slightly tuned the numbers until they felt right. Then again, im sure that it's got bugs left and right, and ill have to have another AI session to fix them up until its fixed.
 
 Anyways ill write down the controls so you dont have to manually check the Ini:
-
+---
 Left Controller:
 
 Trigger = left mouse button
@@ -25,6 +25,7 @@ This is just the Oculus specific stuff, so dont bother reading if u wanna stay o
 X = T
 
 Y = Tab
+
 ---
 
 Right Controller:
