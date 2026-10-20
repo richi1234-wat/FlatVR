@@ -49,7 +49,7 @@ The goal was to make it as similar to the **Flatplayer** mod for Bonelab, while 
 2. Install SteamVR from Steam if you haven't already.
 3. Extract the `FlatVR` folder into your SteamVR directory:
    `C:\Program Files (x86)\Steam\steamapps\common\SteamVR\drivers\FlatVR` 
-   *(Or wherever you installed Steam).*
+   *(Or wherever you installed SteamVR).*
 4. Boot SteamVR. A Headset Mirror should pop up, and you can finally play VR without spending a penny on a physical headset!
 
 *I know this is bare bones, but it's my first time on GitHub and I still have a feeling it is. Enjoy my modded driver!*
