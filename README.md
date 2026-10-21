@@ -37,7 +37,7 @@ The goal was to make it as similar to the **Flatplayer** mod for Bonelab, while 
 *   **Right Hand Edit Mode:** C
 *   **Move Hand:** Mouse
 *   **Rotate Hand (Twist):** Mouse Wheel
-*   **Move Hand Horizontally/Vertically:** W, A, S, D *(Note: The screenshot button is in the way by default, you can change this in `FlatVR.ini`)*
+*   **Move Hand Horizontally/Vertically:** W, A, Z, D *(Note: The screenshot button "S" is in the way by default, you can change this in `FlatVR.ini`)*
 *   **Raise/Lower Hand:** 1 (Up), 2 (Down)
 *   **Fine Tune / Slow Motion:** H
 
