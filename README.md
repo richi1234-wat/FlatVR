@@ -43,6 +43,14 @@ The goal was to make it as similar to the **Flatplayer** mod for Bonelab, while 
 
 ---
 
+## 🚧 Roadmap & Call for Ideas!
+
+I have a lot more updates planned for FlatVR (including FPS hands toggle, literal arm swinger locomotion, and toggleable buttons), but honestly, I'm somewhat figuring out how C++ works by reading the code, since I am NOT learning all of it. 
+
+I know that I'm practically talking to the same amount of people that's countable on my hands, but if you have any cool ideas you think would make this driver better (or if you find a bug), **please open an Issue** or let me know! I'd love to hear what the early adopters want to see next. 
+
+---
+
 ## 📥 Installation
 
 1. Download the latest `.zip` from the **Releases** tab.
