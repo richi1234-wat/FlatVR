@@ -6,8 +6,10 @@
 #include <thread>
 #include <chrono>
 #include <algorithm>
+#include <string>
+#include <sstream>
 
-#include <atomic> // Required for std::atomic
+#include <atomic>
 #include <windows.h>
 #include <atlbase.h>
 #include "IniReader\IniReader.h"
@@ -69,7 +71,7 @@ int KeyNameToKeyCode(std::string KeyName) {
 	else if (KeyName == "D") return 'D'; else if (KeyName == "F") return 'F';
 	else if (KeyName == "G") return 'G'; else if (KeyName == "H") return 'H';
 	else if (KeyName == "J") return 'J'; else if (KeyName == "K") return 'K';
-	else if (KeyName == "L") return 'L'; else if (KeyName == ":") return 186;
+	else if (KeyName == "L") return 'L'; else if (KeyName == ":" || KeyName == "SEMICOLON" || KeyName == ";") return 186;
 	else if (KeyName == "APOSTROPHE") return 222; else if (KeyName == "\\") return 220;
 	else if (KeyName == "Z") return 'Z'; else if (KeyName == "X") return 'X';
 	else if (KeyName == "C") return 'C'; else if (KeyName == "V") return 'V';
@@ -138,7 +140,7 @@ std::string ControllerType = "vive_controller";
 double DegToRad(double f) { return f * (3.14159265358979323846 / 180); }
 
 int KEY_ID_LEFT_TRIGGER, KEY_ID_LEFT_MENU, KEY_ID_LEFT_GRIP, KEY_ID_LEFT_SYSTEM;
-int KEY_ID_RIGHT_TRIGGER, KEY_ID_RIGHT_TRIGGER2, KEY_ID_RIGHT_MENU, KEY_ID_RIGHT_GRIP, KEY_ID_RIGHT_SYSTEM;
+int KEY_ID_RIGHT_TRIGGER, KEY_ID_RIGHT_MENU, KEY_ID_RIGHT_GRIP, KEY_ID_RIGHT_SYSTEM;
 int KEY_ID_CHANGE_WEAPON, KEY_ID_TELEPORT, KEY_ID_MOVE_CONTROLLERS_FORWARD, KEY_ID_MOVE_CONTROLLERS_BACK;
 int KEY_ID_PLAYER_RISE_HIGHER, KEY_ID_PLAYER_RISE_LOWER, KEY_ID_PLAYER_RISE_RESET, KEY_ID_CROUCH, KEY_ID_LEFT_CTRL_MOTION;
 int KEY_ID_ROTATION_CONTROLLERS_RESET;
@@ -148,16 +150,93 @@ int KEY_ID_LEFT_TRACKPAD_CLICK, KEY_ID_RIGHT_TRACKPAD_CLICK, KEY_ID_FINE_TUNE;
 int KEY_ID_MOTION_MODE_MOVE_UP, KEY_ID_MOTION_MODE_MOVE_DOWN;
 int KEY_ID_TURN_LEFT, KEY_ID_TURN_RIGHT;
 int KEY_ID_UP, KEY_ID_DOWN, KEY_ID_LEFT, KEY_ID_RIGHT;
+int KEY_ID_FPS_MODE_TOGGLE;
+
+bool FPSModeActive = false;
+bool PrevFPSModeKey = false;
+
+// --- Auto Hand Swinger Globals ---
+bool AutoSwingActive = false;
+bool AutoSwingHoldMode = false; // If true, requires holding the key. If false, toggles.
+bool PrevAutoSwingKey = false;
+int KEY_ID_AUTO_SWING_TOGGLE;
+
+// --- Low-Level Keyboard Hook ---
+HHOOK g_hKeyboardHook = NULL;
+std::vector<int> g_DriverKeys;
+std::atomic<bool> g_SwallowedKeyState[256] = { false };
+
+// Checks if a key is pressed, using our manual tracker if it's a swallowed key.
+bool IsKeyDown(int vkCode) {
+    if (std::find(g_DriverKeys.begin(), g_DriverKeys.end(), vkCode) != g_DriverKeys.end()) {
+        return g_SwallowedKeyState[vkCode];
+    }
+    return (GetAsyncKeyState(vkCode) & 0x8000) != 0;
+}
+
+// --- Shotgun Pump Globals ---
+int KEY_ID_PUMP_ACTION;
+double PumpTimer = 0.0;
+bool PrevPumpKey = false;
+
+// --- Hand Lock Globals ---
+bool LeftHandLocked = false;
+bool RightHandLocked = false;
+bool PrevLeftLockKey = false;
+bool PrevRightLockKey = false;
+int KEY_ID_LEFT_HAND_LOCK, KEY_ID_RIGHT_HAND_LOCK;
+double LockedLeftPos[3] = { 0, 0, 0 };
+double LockedRightPos[3] = { 0, 0, 0 };
+double LockedLeftYaw = 0, LockedLeftPitch = 0, LockedLeftRoll = 0;
+double LockedRightYaw = 0, LockedRightPitch = 0, LockedRightRoll = 0;
+
+// --- HMD Movement Globals ---
+double HMDPosX = 0, HMDPosY = 0;
+int KEY_ID_HMD_FORWARD, KEY_ID_HMD_BACK, KEY_ID_HMD_LEFT, KEY_ID_HMD_RIGHT, KEY_ID_HMD_MOVE_RESET;
+
+// --- Universal Button Toggle System ---
+struct ButtonState {
+    bool isToggle = false;
+    bool state = false;
+    bool prev = false;
+};
+
+ButtonState Btn_LeftTrigger, Btn_LeftGrip, Btn_LeftMenu, Btn_LeftSystem;
+ButtonState Btn_RightTrigger, Btn_RightGrip, Btn_RightMenu, Btn_RightSystem;
+ButtonState Btn_LeftA, Btn_LeftB, Btn_RightA, Btn_RightB;
+ButtonState Btn_LeftTrackpadClick, Btn_RightTrackpadClick;
+ButtonState Btn_Up, Btn_Down, Btn_Left, Btn_Right;
+ButtonState Btn_TurnLeft, Btn_TurnRight, Btn_Teleport, Btn_ChangeWeapon;
+
+// Helper function to check if a button is pressed (either Hold or Toggle)
+bool CheckButton(int keyCode, ButtonState& state) {
+    if (keyCode == 0) return false;
+    bool isPressed = IsKeyDown(keyCode);
+    
+    if (state.isToggle) {
+        if (isPressed && !state.prev) {
+            state.state = !state.state;
+        }
+        state.prev = isPressed;
+        return state.state;
+    } else {
+        return isPressed;
+    }
+}
+
+double ArmSwingTime = 0.0;
+double ArmSwingSpeed = 3.0;
+double ArmSwingDistance = 0.35;
 
 // Oculus specific keys
 int KEY_ID_LEFT_A, KEY_ID_LEFT_B, KEY_ID_RIGHT_A, KEY_ID_RIGHT_B;
-int KEY_ID_STICK_CLICK_LEFT, KEY_ID_STICK_CLICK_RIGHT, KEY_ID_MENU_CLICK;
 
 #define StepPos 0.01;
 double HMDPosZ = 0;
 double FirstCtrlPos[3] = { 0, 0, 0 }, SecondCtrlPos[3] = { 0, 0, 0 };
 double CtrlsRoll = 0, CtrlsPitch = 0;
 float CrouchOffsetZ = 0;
+double LeftZOffset_Target = 0.0, RightZOffset_Target = 0.0;
 
 THMD mouseHMD;
 THMD cameraHMD;
@@ -166,11 +245,16 @@ int m_HalfWidth = 1920 / 2, m_HalfHeight = 1080 / 2;
 float mouseSensetivePitch = 0.04, mouseSensetiveYaw = 0.05;
 float mouseYaw = 0, mousePitch = 0;
 float HandMoveSensitivity = 5.0f;
+float HandCenterOffsetX = -0.05f;
+
+float RotationSpeed = 0.05f;
+float FineTuneMultiplier = 0.1f;
+float ScrollPushPullSpeed = 0.0005f;
+float OculusHeight = 0.05f;
+float OculusSeparation = 0.08f;
 
 HWND SteamVRHeadsetWindow = 0;
-HWND HalfLifeAlyxWindow = 0;
 bool HeadsetWindowFocused = false;
-bool HalfLifeAlyxFocused = false;
 bool VRMode = false;
 float VRAimingAngleOffset;
 float oldPitch = 0, deltaPitch = 0, oldRoll = 0, deltaRoll = 0;
@@ -193,7 +277,7 @@ float MotionLeftRadDist = 0, MotionLeftAngleDist = 0;
 #define OffsetPitchByDefault -45
 float ZPosSensetive = 0.009;
 
-// --- NEW: Low-Level Mouse Hook for Scroll Wheel ---
+// --- Low-Level Mouse Hook for Scroll Wheel ---
 HHOOK g_hMouseHook = NULL;
 std::atomic<int> g_MouseWheelDelta(0);
 DWORD g_HookThreadId = 0;
@@ -202,13 +286,31 @@ std::thread g_HookThread;
 LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
 	if (nCode >= 0 && wParam == WM_MOUSEWHEEL) {
 		MSLLHOOKSTRUCT* pMouseStruct = (MSLLHOOKSTRUCT*)lParam;
-		// Extract high-word delta (correct for Low-Level hook)
 		short delta = (short)HIWORD(pMouseStruct->mouseData);
 		g_MouseWheelDelta += delta;
 	}
 	return CallNextHookEx(g_hMouseHook, nCode, wParam, lParam);
 }
-// --------------------------------------------------
+
+// Captures and swallows driver keys so games don't accidentally see them.
+LRESULT CALLBACK KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode >= 0) {
+        KBDLLHOOKSTRUCT* pKey = (KBDLLHOOKSTRUCT*)lParam;
+        int vkCode = pKey->vkCode;
+
+        if (SteamVRHeadsetWindow != 0 && SteamVRHeadsetWindow == GetForegroundWindow()) {
+            if (std::find(g_DriverKeys.begin(), g_DriverKeys.end(), vkCode) != g_DriverKeys.end()) {
+                if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
+                    g_SwallowedKeyState[vkCode] = true;
+                } else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
+                    g_SwallowedKeyState[vkCode] = false;
+                }
+                return 1; 
+            }
+        }
+    }
+    return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
+}
 
 double OffsetYPR(float f, float f2)
 {
@@ -231,7 +333,6 @@ void MouseToYawPitch()
 
 	mousePitch += (mousePos.y - m_HalfHeight) * mouseSensetivePitch * -1;
 	
-	// REMOVED THE WALL: Only clamp the camera to 90 degrees if we are NOT rotating hands!
 	if (!LeftHandIsRotating && !RightHandIsRotating) {
 		if (mousePitch > 90) mousePitch = 90;
 		else if (mousePitch < -90) mousePitch = -90;
@@ -243,11 +344,22 @@ void MouseToYawPitch()
 
 void GetHMDData(__out THMD* HMD)
 {
-	if ((GetAsyncKeyState(KEY_ID_PLAYER_RISE_HIGHER) & 0x8000) != 0) HMDPosZ += StepPos;
-	if ((GetAsyncKeyState(KEY_ID_PLAYER_RISE_LOWER) & 0x8000) != 0) HMDPosZ -= StepPos;
-	if ((GetAsyncKeyState(KEY_ID_PLAYER_RISE_RESET) & 0x8000) != 0) HMDPosZ = 0;
+	if (IsKeyDown(KEY_ID_PLAYER_RISE_HIGHER)) HMDPosZ += StepPos;
+	if (IsKeyDown(KEY_ID_PLAYER_RISE_LOWER)) HMDPosZ -= StepPos;
+	if (IsKeyDown(KEY_ID_PLAYER_RISE_RESET)) HMDPosZ = 0;
 
-	HMD->X = 0; HMD->Y = 0; HMD->Z = HMDPosZ - CrouchOffsetZ;
+	double moveSpeed = 0.01;
+	double yawRad = DegToRad(cameraHMD.Yaw);
+
+	if (IsKeyDown(KEY_ID_HMD_FORWARD)) { HMDPosX -= sin(yawRad) * moveSpeed; HMDPosY -= cos(yawRad) * moveSpeed; }
+	if (IsKeyDown(KEY_ID_HMD_BACK))    { HMDPosX += sin(yawRad) * moveSpeed; HMDPosY += cos(yawRad) * moveSpeed; }
+	if (IsKeyDown(KEY_ID_HMD_LEFT))    { HMDPosX -= cos(yawRad) * moveSpeed; HMDPosY += sin(yawRad) * moveSpeed; }
+	if (IsKeyDown(KEY_ID_HMD_RIGHT))   { HMDPosX += cos(yawRad) * moveSpeed; HMDPosY -= sin(yawRad) * moveSpeed; }
+	if (IsKeyDown(KEY_ID_HMD_MOVE_RESET)) { HMDPosX = 0; HMDPosY = 0; }
+
+	HMD->X = HMDPosX; 
+	HMD->Y = HMDPosY; 
+	HMD->Z = HMDPosZ - CrouchOffsetZ;
 	HMD->Yaw = cameraHMD.Yaw * -1; HMD->Pitch = cameraHMD.Pitch * -1; HMD->Roll = 0;
 }
 
@@ -259,27 +371,26 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	FirstController->Roll = 0;
 	SecondController->Roll = 0;
 
-	if (HeadsetWindowFocused || HalfLifeAlyxFocused)
+	if (HeadsetWindowFocused)
 	{
-		if ((GetAsyncKeyState(KEY_ID_ROTATION_CONTROLLERS_RESET) & 0x8000) != 0) {
+		if (IsKeyDown(KEY_ID_ROTATION_CONTROLLERS_RESET)) {
 			CtrlsRoll = 0; CtrlsPitch = 0;
 			LeftHandRotOffset[0] = LeftHandRotOffset[1] = LeftHandRotOffset[2] = 0.0;
 			RightHandRotOffset[0] = RightHandRotOffset[1] = RightHandRotOffset[2] = 0.0;
-			LeftXOffset = 0.0; LeftRotateYOffset = 0.0; LeftZOffset = 0.0;
-			RightXOffset = 0.0; RightYOffset = 0.0; RightZOffset = 0.0;
+			LeftXOffset = 0.0; LeftRotateYOffset = 0.0; LeftZOffset = 0.0; LeftZOffset_Target = 0.0;
+			RightXOffset = 0.0; RightYOffset = 0.0; RightZOffset = 0.0; RightZOffset_Target = 0.0;
 		}
 	}
 
 	LeftHandYaw = 0; LeftHandPitch = 0; LeftAngleDist = 0; LeftRadDist = 0;
 	RightHandYaw = 0; RightHandPitch = 0; RightAngleDist = 0; RightRadDist = 0;
 
-	if ((GetAsyncKeyState(KEY_ID_CROUCH) & 0x8000) != 0) { HMDPosZ = 0; CrouchOffsetZ = 0.8; }
+	if (IsKeyDown(KEY_ID_CROUCH)) { HMDPosZ = 0; CrouchOffsetZ = 0.8; }
 	else CrouchOffsetZ = 0;
 
 	deltaPitch = mouseHMD.Yaw - oldPitch; oldPitch = mouseHMD.Yaw;
 	deltaRoll = mouseHMD.Pitch - oldRoll; oldRoll = mouseHMD.Pitch;
 	
-	// Increased limits so you can flick the mouse as fast as you want
 	if (deltaPitch > 360.0f) deltaPitch = 360.0f; if (deltaPitch < -360.0f) deltaPitch = -360.0f;
 	if (deltaRoll > 360.0f) deltaRoll = 360.0f; if (deltaRoll < -360.0f) deltaRoll = -360.0f;
 
@@ -287,42 +398,79 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	if (RightHandIsRotating) { RightHandRotOffset[0] += deltaPitch; RightHandRotOffset[1] += deltaRoll; }
 
 	float dt = max((int)deltaTime.count(), 1) / 1000.0f;
+	
 	float currentSensitivity = HandMoveSensitivity;
-	if ((GetAsyncKeyState(KEY_ID_FINE_TUNE) & 0x8000) != 0) currentSensitivity *= 0.1f;
+	float wheelSensitivity = RotationSpeed;
+	
+	if (IsKeyDown(KEY_ID_FINE_TUNE)) {
+		currentSensitivity *= FineTuneMultiplier;
+		wheelSensitivity *= FineTuneMultiplier;
+	}
 
 	int wheelDelta = g_MouseWheelDelta.exchange(0);
 
-	if (LeftHandIsRotating) {
-		if ((GetAsyncKeyState(KEY_ID_MOTION_MODE_MOVE_UP) & 0x8000) != 0) LeftRotateYOffset += currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_MOTION_MODE_MOVE_DOWN) & 0x8000) != 0) LeftRotateYOffset -= currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_FORWARD) & 0x8000) != 0) LeftZOffset -= currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_BACK) & 0x8000) != 0) LeftZOffset += currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_LEFT) & 0x8000) != 0) LeftXOffset -= currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_RIGHT) & 0x8000) != 0) LeftXOffset += currentSensitivity * dt;
+	if (!LeftHandIsRotating && !RightHandIsRotating) {
+		if (AutoSwingActive) {
+			if (wheelDelta != 0) {
+				ArmSwingSpeed += wheelDelta * 0.005; 
+				if (ArmSwingSpeed < 0.5) ArmSwingSpeed = 0.5;
+				if (ArmSwingSpeed > 15.0) ArmSwingSpeed = 15.0;
+			}
+		}  
+		else {
+			if (wheelDelta != 0) {
+				LeftZOffset_Target -= wheelDelta * ScrollPushPullSpeed;
+				RightZOffset_Target -= wheelDelta * ScrollPushPullSpeed;
+				
+				if (LeftZOffset_Target < -0.8) LeftZOffset_Target = -0.8; 
+				if (LeftZOffset_Target > 0.8) LeftZOffset_Target = 0.8;
+				if (RightZOffset_Target < -0.8) RightZOffset_Target = -0.8; 
+				if (RightZOffset_Target > 0.8) RightZOffset_Target = 0.8;
+			}
+			LeftZOffset += (LeftZOffset_Target - LeftZOffset) * 0.5;
+			RightZOffset += (RightZOffset_Target - RightZOffset) * 0.5;
+		}
+	} else {
+		if (LeftHandIsRotating && wheelDelta != 0) {
+			LeftHandRotOffset[2] += wheelDelta * wheelSensitivity; 
+		}
+		if (RightHandIsRotating && wheelDelta != 0) {
+			RightHandRotOffset[2] += wheelDelta * wheelSensitivity;
+		}
+	}
 
-		// Left Hand Twist (Roll) via Mouse Wheel
+	if (LeftHandIsRotating) {
+		if (IsKeyDown(KEY_ID_MOTION_MODE_MOVE_UP)) LeftRotateYOffset += currentSensitivity * dt;
+		if (IsKeyDown(KEY_ID_MOTION_MODE_MOVE_DOWN)) LeftRotateYOffset -= currentSensitivity * dt;
+		
+		if (IsKeyDown(KEY_ID_HAND_FORWARD)) { LeftZOffset -= currentSensitivity * dt; LeftZOffset_Target -= currentSensitivity * dt; }
+		if (IsKeyDown(KEY_ID_HAND_BACK)) { LeftZOffset += currentSensitivity * dt; LeftZOffset_Target += currentSensitivity * dt; }
+		
+        if (IsKeyDown(KEY_ID_HAND_LEFT)) LeftXOffset -= currentSensitivity * dt;
+		if (IsKeyDown(KEY_ID_HAND_RIGHT)) LeftXOffset += currentSensitivity * dt;
+
 		if (wheelDelta != 0) {
-			LeftHandRotOffset[2] += wheelDelta * 0.05f; // 0.05 sensitivity per notch
+			LeftHandRotOffset[2] += wheelDelta * wheelSensitivity; 
 		}
 	}
 	if (RightHandIsRotating) {
-		if ((GetAsyncKeyState(KEY_ID_MOTION_MODE_MOVE_UP) & 0x8000) != 0) RightYOffset += currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_MOTION_MODE_MOVE_DOWN) & 0x8000) != 0) RightYOffset -= currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_FORWARD) & 0x8000) != 0) RightZOffset -= currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_BACK) & 0x8000) != 0) RightZOffset += currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_LEFT) & 0x8000) != 0) RightXOffset -= currentSensitivity * dt;
-		if ((GetAsyncKeyState(KEY_ID_HAND_RIGHT) & 0x8000) != 0) RightXOffset += currentSensitivity * dt;
+		if (IsKeyDown(KEY_ID_MOTION_MODE_MOVE_UP)) RightYOffset += currentSensitivity * dt;
+		if (IsKeyDown(KEY_ID_MOTION_MODE_MOVE_DOWN)) RightYOffset -= currentSensitivity * dt;
+		
+		if (IsKeyDown(KEY_ID_HAND_FORWARD)) { RightZOffset -= currentSensitivity * dt; RightZOffset_Target -= currentSensitivity * dt; }
+		if (IsKeyDown(KEY_ID_HAND_BACK)) { RightZOffset += currentSensitivity * dt; RightZOffset_Target += currentSensitivity * dt; }
+		
+        if (IsKeyDown(KEY_ID_HAND_LEFT)) RightXOffset -= currentSensitivity * dt;
+		if (IsKeyDown(KEY_ID_HAND_RIGHT)) RightXOffset += currentSensitivity * dt;
 
-		// Right Hand Twist (Roll) via Mouse Wheel
 		if (wheelDelta != 0) {
-			RightHandRotOffset[2] += wheelDelta * 0.05f;
+			RightHandRotOffset[2] += wheelDelta * wheelSensitivity;
 		}
 	}
 
-	// Removed the 0.4 limit so you can stretch your arms out infinitely
-	if ((GetAsyncKeyState(KEY_ID_MOVE_CONTROLLERS_FORWARD) & 0x8000) != 0) HandRadDist += 0.005;
-	if ((GetAsyncKeyState(KEY_ID_MOVE_CONTROLLERS_BACK) & 0x8000) != 0) HandRadDist -= 0.005;
-	if ((GetAsyncKeyState(KEY_ID_MOVE_CONTROLLERS_FORWARD) & 0x8000) == 0 && (GetAsyncKeyState(KEY_ID_MOVE_CONTROLLERS_BACK) & 0x8000) == 0) HandRadDist = 0;
+	if (IsKeyDown(KEY_ID_MOVE_CONTROLLERS_FORWARD)) HandRadDist += 0.005;
+	if (IsKeyDown(KEY_ID_MOVE_CONTROLLERS_BACK)) HandRadDist -= 0.005;
+	if (!IsKeyDown(KEY_ID_MOVE_CONTROLLERS_FORWARD) && !IsKeyDown(KEY_ID_MOVE_CONTROLLERS_BACK)) HandRadDist = 0;
 
 	FirstCtrlPos[0] = (0.4 - LeftRadDist + HandRadDist) * sin(DegToRad(OffsetYPR(OffsetYPR(cameraHMD.Yaw + 180, -17), LeftAngleDist)));
 	FirstCtrlPos[1] = (0.4 - LeftRadDist + HandRadDist) * cos(DegToRad(OffsetYPR(OffsetYPR(cameraHMD.Yaw + 180, -17), LeftAngleDist)));
@@ -332,8 +480,8 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	double moveX_L = LeftXOffset * cos(yawRad) + LeftZOffset * sin(yawRad);
 	double moveZ_L = -LeftXOffset * sin(yawRad) + LeftZOffset * cos(yawRad);
 
-	FirstController->X = FirstCtrlPos[0] + moveX_L;
-	FirstController->Y = FirstCtrlPos[1] + moveZ_L;
+	FirstController->X = FirstCtrlPos[0] + moveX_L + HandCenterOffsetX + HMDPosX;
+	FirstController->Y = FirstCtrlPos[1] + moveZ_L + HMDPosY;
 	FirstController->Z = FirstCtrlPos[2] + LeftRotateYOffset - 0.15;
 
 	SecondCtrlPos[0] = (0.4 - RightRadDist + HandRadDist) * sin(DegToRad(OffsetYPR(OffsetYPR(cameraHMD.Yaw + 180, 17), RightAngleDist)));
@@ -343,22 +491,18 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	double moveX_R = RightXOffset * cos(yawRad) + RightZOffset * sin(yawRad);
 	double moveZ_R = -RightXOffset * sin(yawRad) + RightZOffset * cos(yawRad);
 
-	SecondController->X = SecondCtrlPos[0] + moveX_R;
-	SecondController->Y = SecondCtrlPos[1] + moveZ_R;
+	SecondController->X = SecondCtrlPos[0] + moveX_R + HandCenterOffsetX + HMDPosX;
+	SecondController->Y = SecondCtrlPos[1] + moveZ_R + HMDPosY;
 	SecondController->Z = SecondCtrlPos[2] + RightYOffset - 0.15;
 
-	// --- OCULUS TOUCH SPECIFIC ADJUSTMENTS ---
 	if (ControllerType == "oculus_touch") {
-		double handHeight = 0.05f;
-		FirstController->Z += handHeight;
-		SecondController->Z += handHeight;
+		FirstController->Z += OculusHeight;
+		SecondController->Z += OculusHeight;
 
-		double handSeparation = 0.08f;
-
-		FirstController->X -= handSeparation * cos(yawRad);
-		FirstController->Y += handSeparation * sin(yawRad);
-		SecondController->X += handSeparation * cos(yawRad);
-		SecondController->Y -= handSeparation * sin(yawRad);
+		FirstController->X -= OculusSeparation * cos(yawRad);
+		FirstController->Y += OculusSeparation * sin(yawRad);
+		SecondController->X += OculusSeparation * cos(yawRad);
+		SecondController->Y -= OculusSeparation * sin(yawRad);
 	}
 
 	FirstController->Yaw = OffsetYPR(cameraHMD.Yaw, LeftHandYaw);
@@ -366,54 +510,43 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	SecondController->Yaw = OffsetYPR(OffsetYPR(cameraHMD.Yaw, SecondCtrlYPROffset[0]), RightHandYaw);
 	SecondController->Pitch = OffsetYPR(OffsetYPR(OffsetYPR(cameraHMD.Pitch, OffsetPitchByDefault), SecondCtrlYPROffset[1]), RightHandPitch);
 
-	if ((GetAsyncKeyState(KEY_ID_LEFT_GRIP) & 0x8000) != 0) FirstController->Buttons |= GRIP_BTN;
-	if ((GetAsyncKeyState(KEY_ID_LEFT_MENU) & 0x8000) != 0) FirstController->Buttons |= MENU_BTN;
-	if ((GetAsyncKeyState(KEY_ID_LEFT_TRIGGER) & 0x8000) != 0) FirstController->Trigger = 1;
-	if ((GetAsyncKeyState(KEY_ID_LEFT_SYSTEM) & 0x8000) != 0) FirstController->Buttons |= SYS_BTN;
+	if (CheckButton(KEY_ID_LEFT_GRIP, Btn_LeftGrip)) FirstController->Buttons |= GRIP_BTN;
+	if (CheckButton(KEY_ID_LEFT_MENU, Btn_LeftMenu)) FirstController->Buttons |= MENU_BTN;
+	if (CheckButton(KEY_ID_LEFT_TRIGGER, Btn_LeftTrigger)) FirstController->Trigger = 1;
+	if (CheckButton(KEY_ID_LEFT_SYSTEM, Btn_LeftSystem)) FirstController->Buttons |= SYS_BTN;
 
-	// --- LEFT TRACKPAD LOGIC (Arrows + F Click) ---
 	bool leftPadActive = false;
-	if ((GetAsyncKeyState(KEY_ID_UP) & 0x8000) != 0) { FirstController->AxisY = 1; leftPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_DOWN) & 0x8000) != 0) { FirstController->AxisY = -1; leftPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_LEFT) & 0x8000) != 0) { FirstController->AxisX = -1; leftPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_RIGHT) & 0x8000) != 0) { FirstController->AxisX = 1; leftPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_LEFT_TRACKPAD_CLICK) & 0x8000) != 0) leftPadActive = true;
-	
-	if (leftPadActive) FirstController->Buttons |= THUMB_BTN; // Force physical click
+	if (CheckButton(KEY_ID_UP, Btn_Up)) { FirstController->AxisY = 1; leftPadActive = true; }
+	if (CheckButton(KEY_ID_DOWN, Btn_Down)) { FirstController->AxisY = -1; leftPadActive = true; }
+	if (CheckButton(KEY_ID_LEFT, Btn_Left)) { FirstController->AxisX = -1; leftPadActive = true; }
+	if (CheckButton(KEY_ID_RIGHT, Btn_Right)) { FirstController->AxisX = 1; leftPadActive = true; }
+	if (CheckButton(KEY_ID_LEFT_TRACKPAD_CLICK, Btn_LeftTrackpadClick)) leftPadActive = true;
+	if (leftPadActive) FirstController->Buttons |= THUMB_BTN; 
 
-	// --- RIGHT TRACKPAD LOGIC (B/N + Space + Middle Mouse + V Click) ---
 	bool rightPadActive = false;
-	if ((GetAsyncKeyState(KEY_ID_TURN_LEFT) & 0x8000) != 0) { SecondController->AxisX = -1; rightPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_TURN_RIGHT) & 0x8000) != 0) { SecondController->AxisX = 1; rightPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_TELEPORT) & 0x8000) != 0) { SecondController->AxisY = -1; rightPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_CHANGE_WEAPON) & 0x8000) != 0) { SecondController->AxisY = 1; rightPadActive = true; }
-	if ((GetAsyncKeyState(KEY_ID_RIGHT_TRACKPAD_CLICK) & 0x8000) != 0) rightPadActive = true;
+	if (CheckButton(KEY_ID_TURN_LEFT, Btn_TurnLeft)) { SecondController->AxisX = -1; rightPadActive = true; }
+	if (CheckButton(KEY_ID_TURN_RIGHT, Btn_TurnRight)) { SecondController->AxisX = 1; rightPadActive = true; }
+	if (CheckButton(KEY_ID_TELEPORT, Btn_Teleport)) { SecondController->AxisY = -1; rightPadActive = true; }
+	if (CheckButton(KEY_ID_CHANGE_WEAPON, Btn_ChangeWeapon)) { SecondController->AxisY = 1; rightPadActive = true; }
+	if (CheckButton(KEY_ID_RIGHT_TRACKPAD_CLICK, Btn_RightTrackpadClick)) rightPadActive = true;
+	if (rightPadActive) SecondController->Buttons |= THUMB_BTN;
 
-	if (rightPadActive) SecondController->Buttons |= THUMB_BTN; // Force physical click
+	if (CheckButton(KEY_ID_RIGHT_MENU, Btn_RightMenu)) SecondController->Buttons |= MENU_BTN;
+	if (CheckButton(KEY_ID_RIGHT_GRIP, Btn_RightGrip)) SecondController->Buttons |= GRIP_BTN;
+	if (CheckButton(KEY_ID_RIGHT_SYSTEM, Btn_RightSystem)) SecondController->Buttons |= SYS_BTN;
+	if (CheckButton(KEY_ID_RIGHT_TRIGGER, Btn_RightTrigger)) SecondController->Trigger = 1;
 
-	// Other buttons
-	if ((GetAsyncKeyState(KEY_ID_RIGHT_MENU) & 0x8000) != 0) SecondController->Buttons |= MENU_BTN;
-	if ((GetAsyncKeyState(KEY_ID_RIGHT_GRIP) & 0x8000) != 0) SecondController->Buttons |= GRIP_BTN;
-	if ((GetAsyncKeyState(KEY_ID_RIGHT_SYSTEM) & 0x8000) != 0) SecondController->Buttons |= SYS_BTN;
-	if ((GetAsyncKeyState(KEY_ID_RIGHT_TRIGGER2) & 0x8000) != 0) SecondController->Trigger = 1;
-	if ((GetAsyncKeyState(KEY_ID_RIGHT_TRIGGER) & 0x8000) != 0) SecondController->Trigger = 1;
-
-	// Oculus Touch exclusive inputs
 	if (ControllerType == "oculus_touch") {
-		FirstController->ButtonA = (GetAsyncKeyState(KEY_ID_LEFT_A) & 0x8000) != 0;
-		FirstController->ButtonB = (GetAsyncKeyState(KEY_ID_LEFT_B) & 0x8000) != 0;
-		SecondController->ButtonA = (GetAsyncKeyState(KEY_ID_RIGHT_A) & 0x8000) != 0;
-		SecondController->ButtonB = (GetAsyncKeyState(KEY_ID_RIGHT_B) & 0x8000) != 0;
+		FirstController->ButtonA = CheckButton(KEY_ID_LEFT_A, Btn_LeftA);
+		FirstController->ButtonB = CheckButton(KEY_ID_LEFT_B, Btn_LeftB);
+		SecondController->ButtonA = CheckButton(KEY_ID_RIGHT_A, Btn_RightA);
+		SecondController->ButtonB = CheckButton(KEY_ID_RIGHT_B, Btn_RightB);
 
-		FirstController->GripValue = (GetAsyncKeyState(KEY_ID_LEFT_GRIP) & 0x8000) != 0 ? 1.0f : 0.0f;
-		SecondController->GripValue = (GetAsyncKeyState(KEY_ID_RIGHT_GRIP) & 0x8000) != 0 ? 1.0f : 0.0f;
-
-		if ((GetAsyncKeyState(KEY_ID_STICK_CLICK_LEFT) & 0x8000) != 0) FirstController->Buttons |= THUMB_BTN;
-		if ((GetAsyncKeyState(KEY_ID_STICK_CLICK_RIGHT) & 0x8000) != 0) SecondController->Buttons |= THUMB_BTN;
-		if ((GetAsyncKeyState(KEY_ID_MENU_CLICK) & 0x8000) != 0) FirstController->Buttons |= MENU_BTN;
+		FirstController->GripValue = CheckButton(KEY_ID_LEFT_GRIP, Btn_LeftGrip) ? 1.0f : 0.0f;
+		SecondController->GripValue = CheckButton(KEY_ID_RIGHT_GRIP, Btn_RightGrip) ? 1.0f : 0.0f;
 	}
 
-	if (HeadsetWindowFocused == false && HalfLifeAlyxFocused == false)
+	if (HeadsetWindowFocused == false)
 	{
 		FirstController->Buttons = 0; FirstController->Trigger = 0;
 		FirstController->AxisX = 0; FirstController->AxisY = 0;
@@ -433,8 +566,96 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	SecondController->Pitch = OffsetYPR(SecondController->Pitch, RightHandRotOffset[1]);
 	SecondController->Roll = OffsetYPR(SecondController->Roll, RightHandRotOffset[2]);
 
+	if (FPSModeActive) {
+		double fpsYawRad = DegToRad(cameraHMD.Yaw);
+		double fpsPitchRad = DegToRad(cameraHMD.Pitch);
+
+		double forwardDist = 0.4;
+		double baseX = -forwardDist * sin(fpsYawRad) * cos(fpsPitchRad);
+		double baseY = -forwardDist * cos(fpsYawRad) * cos(fpsPitchRad);
+		double baseZ = forwardDist * sin(fpsPitchRad);
+
+		double pitched_moveY_R = moveZ_R * cos(fpsPitchRad);
+		double pitched_moveZ_R = -moveZ_R * sin(fpsPitchRad); 
+
+		double pitched_moveY_L = moveZ_L * cos(fpsPitchRad);
+		double pitched_moveZ_L = -moveZ_L * sin(fpsPitchRad); 
+
+		double leftOffsetY = 0.12 * sin(fpsYawRad);
+		double pitched_leftOffsetY = leftOffsetY * cos(fpsPitchRad);
+		double pitched_leftOffsetZ = leftOffsetY * sin(fpsPitchRad);
+
+		SecondController->X = baseX + moveX_R + HandCenterOffsetX + HMDPosX;
+		SecondController->Y = baseY + pitched_moveY_R + HMDPosY;
+		SecondController->Z = baseZ + pitched_moveZ_R + RightYOffset + HMDPosZ - CrouchOffsetZ - 0.15;
+
+		FirstController->X = baseX - (0.12 * cos(fpsYawRad)) + moveX_L + HandCenterOffsetX + HMDPosX;
+		FirstController->Y = baseY + pitched_leftOffsetY + pitched_moveY_L + HMDPosY;
+		FirstController->Z = baseZ + pitched_leftOffsetZ + pitched_moveZ_L + LeftRotateYOffset + HMDPosZ - CrouchOffsetZ - 0.15;
+
+		if (PumpTimer > 0.0) {
+			PumpTimer -= dt;
+			if (PumpTimer < 0.0) PumpTimer = 0.0;
+
+			double pumpProgress = 1.0 - (PumpTimer / 0.35);
+			double pumpOffset = sin(pumpProgress * 3.14159) * 0.15;
+
+			FirstController->X += pumpOffset * sin(fpsYawRad) * cos(fpsPitchRad);
+			FirstController->Y += pumpOffset * cos(fpsYawRad) * cos(fpsPitchRad);
+			FirstController->Z += pumpOffset * sin(fpsPitchRad);
+		}
+
+		FirstController->Yaw = cameraHMD.Yaw;
+		FirstController->Pitch = cameraHMD.Pitch;
+		FirstController->Roll = 0;
+		
+		SecondController->Yaw = cameraHMD.Yaw;
+		SecondController->Pitch = cameraHMD.Pitch;
+		SecondController->Roll = 0;
+
+		FirstController->Yaw = OffsetYPR(FirstController->Yaw, LeftHandRotOffset[0]);
+		FirstController->Pitch = OffsetYPR(FirstController->Pitch, LeftHandRotOffset[1]);
+		SecondController->Yaw = OffsetYPR(SecondController->Yaw, RightHandRotOffset[0]);
+		SecondController->Pitch = OffsetYPR(SecondController->Pitch, RightHandRotOffset[1]);
+	}
+
+	if (AutoSwingActive) {
+		ArmSwingTime += dt * ArmSwingSpeed;
+		double swingForward = sin(ArmSwingTime) * ArmSwingDistance;
+		double swingX = swingForward * sin(yawRad);
+		double swingY = swingForward * cos(yawRad);
+
+		FirstController->X += swingX;
+		FirstController->Y += swingY;
+		SecondController->X -= swingX;
+		SecondController->Y -= swingY;
+	}
+
 	FirstController->Yaw = FirstController->Yaw * -1; FirstController->Pitch = FirstController->Pitch * -1;
 	SecondController->Yaw = SecondController->Yaw * -1; SecondController->Pitch = SecondController->Pitch * -1;
+
+	if (LeftHandLocked) {
+		FirstController->X = LockedLeftPos[0];
+		FirstController->Y = LockedLeftPos[1];
+		FirstController->Z = LockedLeftPos[2];
+		
+		if (!LeftHandIsRotating) {
+			FirstController->Yaw = LockedLeftYaw;
+			FirstController->Pitch = LockedLeftPitch;
+			FirstController->Roll = LockedLeftRoll;
+		}
+	}
+	if (RightHandLocked) {
+		SecondController->X = LockedRightPos[0];
+		SecondController->Y = LockedRightPos[1];
+		SecondController->Z = LockedRightPos[2];
+		
+		if (!RightHandIsRotating) {
+			SecondController->Yaw = LockedRightYaw;
+			SecondController->Pitch = LockedRightPitch;
+			SecondController->Roll = LockedRightRoll;
+		}
+	}
 }
 
 inline vr::HmdQuaternion_t EulerAngleToQuaternion(double Yaw, double Pitch, double Roll)
@@ -442,8 +663,12 @@ inline vr::HmdQuaternion_t EulerAngleToQuaternion(double Yaw, double Pitch, doub
 	vr::HmdQuaternion_t q;
 	double cy = cos(Yaw * 0.5); double sy = sin(Yaw * 0.5); double cp = cos(Pitch * 0.5);
 	double sp = sin(Pitch * 0.5); double cr = cos(Roll * 0.5); double sr = sin(Roll * 0.5);
-	q.w = cr * cp * cy + sr * sp * sy; q.x = sr * cp * cy - cr * sp * sy;
-	q.y = cr * sp * cy + sr * cp * sy; q.z = cr * cp * sy - sr * sp * cy;
+	
+	q.w = cy * cp * cr + sy * sp * sr;
+	q.x = cy * sp * cr + sy * cp * sr;
+	q.y = sy * cp * cr - cy * sp * sr;
+	q.z = cy * cp * sr - sy * sp * cr;
+	
 	return q;
 }
 
@@ -492,7 +717,6 @@ public:
 		vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, vr::Prop_NeverTracked_Bool, false);
 		vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, vr::Prop_Identifiable_Bool, false);
 
-		// Headset Spoofing Logic
 		if (ControllerType == "oculus_touch") {
 			vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, Prop_ManufacturerName_String, "Oculus");
 			vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, Prop_RegisteredDeviceType_String, "oculus/Facebook");
@@ -546,7 +770,7 @@ public:
 		DriverPose_t pose = { 0 }; if (HMDConnected) { pose.poseIsValid = true; pose.result = TrackingResult_Running_OK; pose.deviceIsConnected = true; }
 		else { pose.poseIsValid = false; pose.result = TrackingResult_Uninitialized; pose.deviceIsConnected = false; }
 		pose.qWorldFromDriverRotation = HmdQuaternion_Init(1, 0, 0, 0); pose.qDriverFromHeadRotation = HmdQuaternion_Init(1, 0, 0, 0);
-		if (HMDConnected) { GetHMDData(&MyHMD); pose.qRotation = EulerAngleToQuaternion(DegToRad(MyHMD.Roll), DegToRad(-MyHMD.Yaw), DegToRad(-MyHMD.Pitch)); pose.vecPosition[0] = MyHMD.X; pose.vecPosition[1] = MyHMD.Z; pose.vecPosition[2] = MyHMD.Y; }
+		if (HMDConnected) { GetHMDData(&MyHMD); pose.qRotation = EulerAngleToQuaternion(DegToRad(-MyHMD.Yaw), DegToRad(-MyHMD.Pitch), DegToRad(MyHMD.Roll)); pose.vecPosition[0] = MyHMD.X; pose.vecPosition[1] = MyHMD.Z; pose.vecPosition[2] = MyHMD.Y; }
 		pose.shouldApplyHeadModel = true; pose.poseTimeOffset = 0; pose.willDriftInYaw = false; return pose;
 	}
 	void RunFrame() { if (HMDIndex_t != vr::k_unTrackedDeviceIndexInvalid) vr::VRServerDriverHost()->TrackedDevicePoseUpdated(HMDIndex_t, GetPose(), sizeof(DriverPose_t)); }
@@ -633,17 +857,28 @@ public:
 	{
 		DriverPose_t pose = { 0 }; pose.poseIsValid = true; pose.result = TrackingResult_Running_OK; pose.deviceIsConnected = true;
 		pose.qWorldFromDriverRotation = HmdQuaternion_Init(1, 0, 0, 0); pose.qDriverFromHeadRotation = HmdQuaternion_Init(1, 0, 0, 0);
+		
+		double safeDt = max((int)deltaTime.count(), 1) / 1000.0;
+
 		if (ControllerIndex == 1) {
 			pose.vecPosition[0] = MyCtrl.X; pose.vecPosition[1] = MyCtrl.Z; pose.vecPosition[2] = MyCtrl.Y;
-			pose.vecVelocity[0] = (pose.vecPosition[0] - FirstCtrlLastPos[0]) * 1000 / max((int)deltaTime.count(), 1) / 3; pose.vecVelocity[1] = (pose.vecPosition[1] - FirstCtrlLastPos[1]) * 1000 / max((int)deltaTime.count(), 1) / 3; pose.vecVelocity[2] = (pose.vecPosition[2] - FirstCtrlLastPos[2]) * 1000 / max((int)deltaTime.count(), 1) / 3;
+			
+			pose.vecVelocity[0] = (pose.vecPosition[0] - FirstCtrlLastPos[0]) * 1000 / max((int)deltaTime.count(), 1); 
+			pose.vecVelocity[1] = (pose.vecPosition[1] - FirstCtrlLastPos[1]) * 1000 / max((int)deltaTime.count(), 1); 
+			pose.vecVelocity[2] = (pose.vecPosition[2] - FirstCtrlLastPos[2]) * 1000 / max((int)deltaTime.count(), 1);
+
 			FirstCtrlLastPos[0] = pose.vecPosition[0]; FirstCtrlLastPos[1] = pose.vecPosition[1]; FirstCtrlLastPos[2] = pose.vecPosition[2];
-			pose.qRotation = EulerAngleToQuaternion(DegToRad(MyCtrl.Roll), DegToRad(-MyCtrl.Yaw), DegToRad(-MyCtrl.Pitch));
+			pose.qRotation = EulerAngleToQuaternion(DegToRad(-MyCtrl.Yaw), DegToRad(-MyCtrl.Pitch), DegToRad(MyCtrl.Roll));
 		}
 		else {
 			pose.vecPosition[0] = MyCtrl2.X; pose.vecPosition[1] = MyCtrl2.Z; pose.vecPosition[2] = MyCtrl2.Y;
-			pose.vecVelocity[0] = (pose.vecPosition[0] - SecondCtrlLastPos[0]) * 1000 / max((int)deltaTime.count(), 1) / 3; pose.vecVelocity[1] = (pose.vecPosition[1] - SecondCtrlLastPos[1]) * 1000 / max((int)deltaTime.count(), 1) / 3; pose.vecVelocity[2] = (pose.vecPosition[2] - SecondCtrlLastPos[2]) * 1000 / max((int)deltaTime.count(), 1) / 3;
+			
+			pose.vecVelocity[0] = (pose.vecPosition[0] - SecondCtrlLastPos[0]) * 1000 / max((int)deltaTime.count(), 1); 
+			pose.vecVelocity[1] = (pose.vecPosition[1] - SecondCtrlLastPos[1]) * 1000 / max((int)deltaTime.count(), 1); 
+			pose.vecVelocity[2] = (pose.vecPosition[2] - SecondCtrlLastPos[2]) * 1000 / max((int)deltaTime.count(), 1);
+			
 			SecondCtrlLastPos[0] = pose.vecPosition[0]; SecondCtrlLastPos[1] = pose.vecPosition[1]; SecondCtrlLastPos[2] = pose.vecPosition[2];
-			pose.qRotation = EulerAngleToQuaternion(DegToRad(MyCtrl2.Roll), DegToRad(-MyCtrl2.Yaw), DegToRad(-MyCtrl2.Pitch));
+			pose.qRotation = EulerAngleToQuaternion(DegToRad(-MyCtrl2.Yaw), DegToRad(-MyCtrl2.Pitch), DegToRad(MyCtrl2.Roll));
 		}
 		return pose;
 	}
@@ -667,9 +902,8 @@ public:
 				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[6], (MyCtrl.Buttons & SYS_BTN) != 0, 0);
 				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[7], MyCtrl.Trigger > 0.1f, 0);
 
-				// LEFT: X and Y only
-				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[2], MyCtrl.ButtonA, 0);   // X
-				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[3], MyCtrl.ButtonB, 0);   // Y
+				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[2], MyCtrl.ButtonA, 0);
+				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[3], MyCtrl.ButtonB, 0);
 			}
 			else {
 				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[0], (MyCtrl.Buttons & MENU_BTN) != 0, 0);
@@ -692,9 +926,8 @@ public:
 				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[6], (MyCtrl2.Buttons & SYS_BTN) != 0, 0);
 				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[7], MyCtrl2.Trigger > 0.1f, 0);
 
-				// RIGHT: A and B only
-				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[0], MyCtrl2.ButtonA, 0);  // A
-				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[1], MyCtrl2.ButtonB, 0);  // B
+				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[0], MyCtrl2.ButtonA, 0);
+				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[1], MyCtrl2.ButtonB, 0);
 			}
 			else {
 				vr::VRDriverInput()->UpdateBooleanComponent(HButtons[0], (MyCtrl2.Buttons & MENU_BTN) != 0, 0);
@@ -757,7 +990,6 @@ EVRInitError CServerDriver_Sample::Init(vr::IVRDriverContext* pDriverContext)
 	KEY_ID_LEFT_GRIP = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_GRIP", "ESCAPE"));
 	KEY_ID_LEFT_SYSTEM = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_SYSTEM", "F9"));
 	KEY_ID_RIGHT_TRIGGER = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_TRIGGER", "MOUSE-LEFT-BTN"));
-	KEY_ID_RIGHT_TRIGGER2 = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_TRIGGER2", "NUMPAD1"));
 	KEY_ID_RIGHT_MENU = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_MENU", "NUMPAD-DEL"));
 	KEY_ID_RIGHT_GRIP = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_GRIP", "NUMPAD0"));
 	KEY_ID_RIGHT_SYSTEM = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_SYSTEM", "4"));
@@ -772,6 +1004,19 @@ EVRInitError CServerDriver_Sample::Init(vr::IVRDriverContext* pDriverContext)
 	KEY_ID_LEFT_CTRL_MOTION = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_CTRL_MOTION", "NONE"));
 	KEY_ID_ROTATION_CONTROLLERS_RESET = KeyNameToKeyCode(IniFile.ReadString("Keys", "ROTATION_CONTROLLERS_RESET", "Y"));
 	KEY_ID_FINE_TUNE = KeyNameToKeyCode(IniFile.ReadString("Keys", "FINE_TUNE", "RCTRL"));
+	KEY_ID_FPS_MODE_TOGGLE = KeyNameToKeyCode(IniFile.ReadString("Keys", "FPS_MODE_TOGGLE", "J"));
+	KEY_ID_AUTO_SWING_TOGGLE = KeyNameToKeyCode(IniFile.ReadString("Keys", "AUTO_SWING_TOGGLE", "K"));
+	KEY_ID_PUMP_ACTION = KeyNameToKeyCode(IniFile.ReadString("Keys", "PUMP_ACTION", "MOUSE-SIDE1-BTN"));
+	
+	KEY_ID_LEFT_HAND_LOCK = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_HAND_LOCK", "L"));
+	KEY_ID_RIGHT_HAND_LOCK = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_HAND_LOCK", "SEMICOLON"));
+
+	KEY_ID_HMD_FORWARD = KeyNameToKeyCode(IniFile.ReadString("Keys", "HMD_FORWARD", "NUMPAD8"));
+	KEY_ID_HMD_BACK = KeyNameToKeyCode(IniFile.ReadString("Keys", "HMD_BACK", "NUMPAD5"));
+	KEY_ID_HMD_LEFT = KeyNameToKeyCode(IniFile.ReadString("Keys", "HMD_LEFT", "NUMPAD4"));
+	KEY_ID_HMD_RIGHT = KeyNameToKeyCode(IniFile.ReadString("Keys", "HMD_RIGHT", "NUMPAD6"));
+	KEY_ID_HMD_MOVE_RESET = KeyNameToKeyCode(IniFile.ReadString("Keys", "HMD_MOVE_RESET", "U"));
+
 	KEY_ID_LEFT_HAND_ROTATE = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_HAND_ROTATE", "X"));
 	KEY_ID_RIGHT_HAND_ROTATE = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_HAND_ROTATE", "C"));
 	KEY_ID_HAND_FORWARD = KeyNameToKeyCode(IniFile.ReadString("Keys", "HAND_FORWARD", "W"));
@@ -789,41 +1034,85 @@ EVRInitError CServerDriver_Sample::Init(vr::IVRDriverContext* pDriverContext)
 	KEY_ID_LEFT = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT", "LEFT"));
 	KEY_ID_RIGHT = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT", "RIGHT"));
 
-	// Oculus specific
 	KEY_ID_LEFT_A = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_A", "Z"));
 	KEY_ID_LEFT_B = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_B", "X"));
 	KEY_ID_RIGHT_A = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_A", "C"));
 	KEY_ID_RIGHT_B = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_B", "V"));
-	KEY_ID_STICK_CLICK_LEFT = KeyNameToKeyCode(IniFile.ReadString("Keys", "STICK_CLICK_LEFT", "C"));
-	KEY_ID_STICK_CLICK_RIGHT = KeyNameToKeyCode(IniFile.ReadString("Keys", "STICK_CLICK_RIGHT", "V"));
-	KEY_ID_MENU_CLICK = KeyNameToKeyCode(IniFile.ReadString("Keys", "MENU_CLICK", "TAB"));
+
+	std::string modeStr;
+	modeStr = IniFile.ReadString("Modes", "LEFT_TRIGGER_MODE", "HOLD"); Btn_LeftTrigger.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "LEFT_GRIP_MODE", "HOLD"); Btn_LeftGrip.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "LEFT_MENU_MODE", "HOLD"); Btn_LeftMenu.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "LEFT_SYSTEM_MODE", "HOLD"); Btn_LeftSystem.isToggle = (modeStr == "TOGGLE");
+	
+	modeStr = IniFile.ReadString("Modes", "RIGHT_TRIGGER_MODE", "HOLD"); Btn_RightTrigger.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "RIGHT_GRIP_MODE", "HOLD"); Btn_RightGrip.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "RIGHT_MENU_MODE", "HOLD"); Btn_RightMenu.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "RIGHT_SYSTEM_MODE", "HOLD"); Btn_RightSystem.isToggle = (modeStr == "TOGGLE");
+	
+	modeStr = IniFile.ReadString("Modes", "LEFT_A_MODE", "HOLD"); Btn_LeftA.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "LEFT_B_MODE", "HOLD"); Btn_LeftB.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "RIGHT_A_MODE", "HOLD"); Btn_RightA.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "RIGHT_B_MODE", "HOLD"); Btn_RightB.isToggle = (modeStr == "TOGGLE");
+	
+	modeStr = IniFile.ReadString("Modes", "LEFT_TRACKPAD_CLICK_MODE", "HOLD"); Btn_LeftTrackpadClick.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "RIGHT_TRACKPAD_CLICK_MODE", "HOLD"); Btn_RightTrackpadClick.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "UP_MODE", "HOLD"); Btn_Up.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "DOWN_MODE", "HOLD"); Btn_Down.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "LEFT_MODE", "HOLD"); Btn_Left.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "RIGHT_MODE", "HOLD"); Btn_Right.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "TURN_LEFT_MODE", "HOLD"); Btn_TurnLeft.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "TURN_RIGHT_MODE", "HOLD"); Btn_TurnRight.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "TELEPORT_MODE", "HOLD"); Btn_Teleport.isToggle = (modeStr == "TOGGLE");
+	modeStr = IniFile.ReadString("Modes", "CHANGE_WEAPON_MODE", "HOLD"); Btn_ChangeWeapon.isToggle = (modeStr == "TOGGLE");
 
 	mouseSensetiveYaw = IniFile.ReadFloat("Main", "AxisX", 0.05);
 	mouseSensetivePitch = IniFile.ReadFloat("Main", "AxisY", 0.04);
 	ZPosSensetive = IniFile.ReadFloat("Main", "AxisZ", 0.009);
 	HandMoveSensitivity = IniFile.ReadFloat("Main", "HandMoveSensitivity", 0.5f);
+	HandCenterOffsetX = IniFile.ReadFloat("Main", "HandCenterOffsetX", -0.05f);
+	
+	RotationSpeed = IniFile.ReadFloat("Main", "RotationSpeed", 0.05f);
+	FineTuneMultiplier = IniFile.ReadFloat("Main", "FineTuneMultiplier", 0.1f);
+	ScrollPushPullSpeed = IniFile.ReadFloat("Main", "ScrollPushPullSpeed", 0.0005f);
+	OculusHeight = IniFile.ReadFloat("Main", "OculusHeight", 0.05f);
+	OculusSeparation = IniFile.ReadFloat("Main", "OculusSeparation", 0.08f);
+	
+	AutoSwingHoldMode = IniFile.ReadBoolean("Main", "AutoSwingHoldMode", false);
+
 	VRMode = IniFile.ReadBoolean("Main", "VRMode", false);
 	VRAimingAngleOffset = IniFile.ReadFloat("Main", "VRAimingAngleOffset", 0);
 	m_HalfWidth = GetSystemMetrics(SM_CXSCREEN) / 2;
 	m_HalfHeight = GetSystemMetrics(SM_CYSCREEN) / 2;
 	HMDConnected = IniFile.ReadBoolean("Main", "HMD", true);
 
-	// Initialize the low-level mouse hook for scroll wheel on a dedicated message thread
+	std::string swallowStr = IniFile.ReadString("SwallowKeys", "Keys", "");
+	std::stringstream ss(swallowStr);
+	std::string token;
+	while (std::getline(ss, token, ',')) {
+		token.erase(std::remove_if(token.begin(), token.end(), ::isspace), token.end());
+		if (!token.empty()) {
+			int code = KeyNameToKeyCode(token);
+			if (code != 0) g_DriverKeys.push_back(code);
+		}
+	}
+
 	g_HookThread = std::thread([]() {
 		g_HookThreadId = GetCurrentThreadId();
 		HMODULE hMod = NULL;
 		GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCTSTR)reinterpret_cast<void*>(MouseHookProc), &hMod);
-		g_hMouseHook = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, hMod, 0);
 
-		if (g_hMouseHook) {
+		g_hMouseHook = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, hMod, 0);
+		g_hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardHookProc, hMod, 0);
+
+		if (g_hMouseHook || g_hKeyboardHook) {
 			MSG msg;
-			// Keep the thread alive with a message loop so Windows doesn't kill the hook
 			while (GetMessage(&msg, NULL, 0, 0)) {
 				TranslateMessage(&msg);
 				DispatchMessage(&msg);
 			}
-			UnhookWindowsHookEx(g_hMouseHook);
-			g_hMouseHook = NULL;
+			if (g_hMouseHook) { UnhookWindowsHookEx(g_hMouseHook); g_hMouseHook = NULL; }
+			if (g_hKeyboardHook) { UnhookWindowsHookEx(g_hKeyboardHook); g_hKeyboardHook = NULL; }
 		}
 	});
 	g_HookThread.detach();
@@ -854,21 +1143,18 @@ void CServerDriver_Sample::RunFrame()
 	lastMillis = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
 
 	SteamVRHeadsetWindow = FindWindow(NULL, "Headset Window");
-	HalfLifeAlyxWindow = FindWindow(NULL, "Half-Life: Alyx");
 
-	if ((GetAsyncKeyState(VK_F1) & 0x8000) != 0 || (GetAsyncKeyState(VK_F7) & 0x8000) != 0) SetForegroundWindow(SteamVRHeadsetWindow);
+	if (IsKeyDown(VK_F1) || IsKeyDown(VK_F7)) SetForegroundWindow(SteamVRHeadsetWindow);
 
 	HeadsetWindowFocused = SteamVRHeadsetWindow != 0 && SteamVRHeadsetWindow == GetForegroundWindow() && IsWindowVisible(SteamVRHeadsetWindow);
-	HalfLifeAlyxFocused = HalfLifeAlyxWindow != 0 && HalfLifeAlyxWindow == GetForegroundWindow() && IsWindowVisible(HalfLifeAlyxWindow);
 
-	if (HeadsetWindowFocused || HalfLifeAlyxFocused) {
-		bool lr = (GetAsyncKeyState(KEY_ID_LEFT_HAND_ROTATE) & 0x8000) != 0;
-		bool rr = (GetAsyncKeyState(KEY_ID_RIGHT_HAND_ROTATE) & 0x8000) != 0;
+	if (HeadsetWindowFocused) {
+		bool lr = IsKeyDown(KEY_ID_LEFT_HAND_ROTATE);
+		bool rr = IsKeyDown(KEY_ID_RIGHT_HAND_ROTATE);
 		
 		if (lr && !PrevLeftRotateKey) {
 			LeftHandIsRotating = !LeftHandIsRotating;
 			if (!LeftHandIsRotating) {
-				// STOP THE SNAP: Reset mouse to camera's frozen state on exit
 				mouseYaw = cameraHMD.Yaw;
 				mousePitch = cameraHMD.Pitch;
 				mouseHMD = cameraHMD;
@@ -879,7 +1165,6 @@ void CServerDriver_Sample::RunFrame()
 		if (rr && !PrevRightRotateKey) {
 			RightHandIsRotating = !RightHandIsRotating;
 			if (!RightHandIsRotating) {
-				// STOP THE SNAP: Reset mouse to camera's frozen state on exit
 				mouseYaw = cameraHMD.Yaw;
 				mousePitch = cameraHMD.Pitch;
 				mouseHMD = cameraHMD;
@@ -889,8 +1174,59 @@ void CServerDriver_Sample::RunFrame()
 		}
 		PrevLeftRotateKey = lr; PrevRightRotateKey = rr;
 		
-		MouseToYawPitch();
+		bool fpsToggle = IsKeyDown(KEY_ID_FPS_MODE_TOGGLE);
+		if (fpsToggle && !PrevFPSModeKey) {
+			FPSModeActive = !FPSModeActive;
+		}
+		PrevFPSModeKey = fpsToggle;
+
+		bool swingKey = IsKeyDown(KEY_ID_AUTO_SWING_TOGGLE);
+		if (AutoSwingHoldMode) {
+			AutoSwingActive = swingKey;
+		} else {
+			if (swingKey && !PrevAutoSwingKey) {
+				AutoSwingActive = !AutoSwingActive;
+			}
+		}
+		PrevAutoSwingKey = swingKey;
+
+		bool lockL = IsKeyDown(KEY_ID_LEFT_HAND_LOCK);
+		if (lockL && !PrevLeftLockKey) {
+			LeftHandLocked = !LeftHandLocked;
+			if (LeftHandLocked) {
+				LockedLeftPos[0] = MyCtrl.X; LockedLeftPos[1] = MyCtrl.Y; LockedLeftPos[2] = MyCtrl.Z;
+				LockedLeftYaw = MyCtrl.Yaw; LockedLeftPitch = MyCtrl.Pitch; LockedLeftRoll = MyCtrl.Roll;
+			}
+		}
+		PrevLeftLockKey = lockL;
+
+		bool lockR = IsKeyDown(KEY_ID_RIGHT_HAND_LOCK);
+		if (lockR && !PrevRightLockKey) {
+			RightHandLocked = !RightHandLocked;
+			if (RightHandLocked) {
+				LockedRightPos[0] = MyCtrl2.X; LockedRightPos[1] = MyCtrl2.Y; LockedRightPos[2] = MyCtrl2.Z;
+				LockedRightYaw = MyCtrl2.Yaw; LockedRightPitch = MyCtrl2.Pitch; LockedRightRoll = MyCtrl2.Roll;
+			}
+		}
+		PrevRightLockKey = lockR;
+
+		bool pumpKey = IsKeyDown(KEY_ID_PUMP_ACTION);
+		if (pumpKey && !PrevPumpKey) {
+			if (FPSModeActive && PumpTimer <= 0.0) {
+				PumpTimer = 0.35;
+			}
+		}
+		PrevPumpKey = pumpKey;
+
+		MouseToYawPitch();	
 		if (!LeftHandIsRotating && !RightHandIsRotating) cameraHMD = mouseHMD;
+	}
+	else {
+		LeftHandIsRotating = false;
+		RightHandIsRotating = false;
+		PrevLeftRotateKey = false;
+		PrevRightRotateKey = false;
+		if (AutoSwingHoldMode) AutoSwingActive = false;
 	}
 
 	if (m_pNullHmdLatest) m_pNullHmdLatest->RunFrame();
