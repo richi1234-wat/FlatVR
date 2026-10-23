@@ -1,3 +1,0 @@
-C:/Users/richi/Downloads/Half-Life-Alyx-novr-1.2/Half-Life-Alyx-novr-1.2/Source/SteamVR/samples/driver_sample/build/CMakeFiles/driver_sample.dir
-C:/Users/richi/Downloads/Half-Life-Alyx-novr-1.2/Half-Life-Alyx-novr-1.2/Source/SteamVR/samples/driver_sample/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/richi/Downloads/Half-Life-Alyx-novr-1.2/Half-Life-Alyx-novr-1.2/Source/SteamVR/samples/driver_sample/build/CMakeFiles/ZERO_CHECK.dir
