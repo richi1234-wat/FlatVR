@@ -215,8 +215,9 @@ double StepTimer = 0.0;
 // We use offsets instead of absolute positions so the hands still follow your mouse/body!
 double SeqOffsetL[3] = { 0, 0, 0 }, SeqOffsetR[3] = { 0, 0, 0 };
 double SeqRotL[3] = { 0, 0, 0 }, SeqRotR[3] = { 0, 0, 0 };
-bool SeqGripL = false, SeqGripR = false;
-bool SeqTrigL = false, SeqTrigR = false;
+// -1 = Do nothing (let mouse control it), 0 = Force Release, 1 = Force Press
+int SeqGripL = -1, SeqGripR = -1;
+int SeqTrigL = -1, SeqTrigR = -1;
 
 // Key IDs for the custom gestures (5, 6, 7, 8, 9, 0)
 int KEY_ID_GESTURE_CUSTOM_5, KEY_ID_GESTURE_CUSTOM_6, KEY_ID_GESTURE_CUSTOM_7, KEY_ID_GESTURE_CUSTOM_8, KEY_ID_GESTURE_CUSTOM_9, KEY_ID_GESTURE_CUSTOM_0;
@@ -777,7 +778,7 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 			}
 		}
 		else if (step.command == "BUTTON") {
-			bool btnState = step.value > 0.0;
+			int btnState = step.value > 0.0 ? 1 : 0;
 			if (step.target == "L" || step.target == "B") {
 				if (step.axis == "GRIP") SeqGripL = btnState;
 				if (step.axis == "TRIG") SeqTrigL = btnState;
@@ -822,8 +823,11 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	FirstController->Z += SeqOffsetL[2];
 	
 	FirstController->Yaw += SeqRotL[0]; FirstController->Pitch += SeqRotL[1]; FirstController->Roll += SeqRotL[2];
-	if (SeqGripL) FirstController->Buttons |= GRIP_BTN;
-	if (SeqTrigL) FirstController->Trigger = 1.0f;
+	if (SeqGripL == 1) FirstController->Buttons |= GRIP_BTN;
+	else if (SeqGripL == 0) FirstController->Buttons &= ~GRIP_BTN; // Force release
+
+	if (SeqTrigL == 1) FirstController->Trigger = 1.0f;
+	else if (SeqTrigL == 0) FirstController->Trigger = 0.0f; // Force release
 
 	double gestMoveX_R = SeqOffsetR[0] * cos(yawRad) + SeqOffsetR[1] * sin(yawRad);
 	double gestMoveY_R = -SeqOffsetR[0] * sin(yawRad) + SeqOffsetR[1] * cos(yawRad);
@@ -833,8 +837,11 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 	SecondController->Z += SeqOffsetR[2];
 	
 	SecondController->Yaw += SeqRotR[0]; SecondController->Pitch += SeqRotR[1]; SecondController->Roll += SeqRotR[2];
-	if (SeqGripR) SecondController->Buttons |= GRIP_BTN;
-	if (SeqTrigR) SecondController->Trigger = 1.0f;
+	if (SeqGripR == 1) SecondController->Buttons |= GRIP_BTN;
+	else if (SeqGripR == 0) SecondController->Buttons &= ~GRIP_BTN; // Force release
+
+	if (SeqTrigR == 1) SecondController->Trigger = 1.0f;
+	else if (SeqTrigR == 0) SecondController->Trigger = 0.0f; // Force release
 	// =========================================================================================
 
 	FirstController->Yaw = FirstController->Yaw * -1; FirstController->Pitch = FirstController->Pitch * -1;
