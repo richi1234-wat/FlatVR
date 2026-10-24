@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <string>
 #include <sstream>
+#include <fstream> // NEW: Required for reading the custom .gesture files
 
 #include <atomic>
 #include <windows.h>
@@ -194,6 +195,66 @@ double LockedRightYaw = 0, LockedRightPitch = 0, LockedRightRoll = 0;
 double HMDPosX = 0, HMDPosY = 0;
 int KEY_ID_HMD_FORWARD, KEY_ID_HMD_BACK, KEY_ID_HMD_LEFT, KEY_ID_HMD_RIGHT, KEY_ID_HMD_MOVE_RESET;
 
+// =========================================================================================
+// --- CUSTOM GESTURE SCRIPTING ENGINE GLOBALS ---
+// =========================================================================================
+// This struct holds a single line of a .gesture file (e.g., "MOVE L Z -0.2 0.1")
+struct GestureStep {
+    std::string command; // WAIT, MOVE, ROTATE, BUTTON
+    std::string target;  // L (Left), R (Right), B (Both)
+    std::string axis;    // X, Y, Z, YAW, PITCH, ROLL, GRIP, TRIG
+    double value = 0.0;
+    double duration = 0.0;
+};
+
+std::vector<GestureStep> ActiveSequence; // Holds the currently playing animation
+int CurrentStepIndex = -1;               // -1 means no animation is playing
+double StepTimer = 0.0;
+
+// These arrays hold the relative offsets from the animation.
+// We use offsets instead of absolute positions so the hands still follow your mouse/body!
+double SeqOffsetL[3] = { 0, 0, 0 }, SeqOffsetR[3] = { 0, 0, 0 };
+double SeqRotL[3] = { 0, 0, 0 }, SeqRotR[3] = { 0, 0, 0 };
+bool SeqGripL = false, SeqGripR = false;
+bool SeqTrigL = false, SeqTrigR = false;
+
+// Key IDs for the custom gestures (5, 6, 7, 8, 9, 0)
+int KEY_ID_GESTURE_CUSTOM_5, KEY_ID_GESTURE_CUSTOM_6, KEY_ID_GESTURE_CUSTOM_7, KEY_ID_GESTURE_CUSTOM_8, KEY_ID_GESTURE_CUSTOM_9, KEY_ID_GESTURE_CUSTOM_0;
+
+// This function reads the text file line-by-line and converts it into instructions the driver can understand
+void LoadGestureSequence(const std::string& path) {
+    ActiveSequence.clear();
+    std::ifstream file(path);
+    std::string line;
+    
+    if (!file.is_open()) return; // Silently fail if file doesn't exist
+    
+    while (std::getline(file, line)) {
+        // Strip comments starting with '#'
+        size_t commentPos = line.find('#');
+        if (commentPos != std::string::npos) line = line.substr(0, commentPos);
+        
+        std::stringstream ss(line);
+        GestureStep step;
+        ss >> step.command;
+        
+        // Parse the specific syntax for each command
+        if (step.command == "WAIT") {
+            ss >> step.duration;
+        } else if (step.command == "MOVE" || step.command == "ROTATE") {
+            ss >> step.target >> step.axis >> step.value >> step.duration;
+        } else if (step.command == "BUTTON") {
+            ss >> step.target >> step.axis >> step.value >> step.duration;
+        } else continue; // Ignore empty lines or bad commands
+
+        if (step.duration > 0) {
+            ActiveSequence.push_back(step);
+        }
+    }
+}
+// =========================================================================================
+
+
 // --- Universal Button Toggle System ---
 struct ButtonState {
     bool isToggle = false;
@@ -261,6 +322,9 @@ float oldPitch = 0, deltaPitch = 0, oldRoll = 0, deltaRoll = 0;
 double CtrlPosOffset[3] = { 0, 0, 0 };
 double SecondCtrlYPROffset[3] = { 0, 0, 0 };
 double SecondCtrlLastYPR[3] = { 0, 0, 0 };
+
+// Global to hold the Steam directory path so gestures can find their folder anywhere
+std::string g_SteamPathStr = ""; 
 
 float LeftHandYaw = 0, LeftHandPitch = 0, LeftAngleDist = 0, LeftRadDist = 0, LeftYOffset = 0;
 float RightAngleDist = 0;
@@ -631,6 +695,148 @@ void GetControllersData(__out TController* FirstController, __out TController* S
 		SecondController->Y -= swingY;
 	}
 
+	// =========================================================================================
+	// --- GESTURE SEQUENCE PLAYER ENGINE ---
+	// =========================================================================================
+	// 1. Check if we need to start a gesture
+	if (CurrentStepIndex == -1) {
+		if (HeadsetWindowFocused) {
+			// Base path for the gesture files. Uses the Steam path we found in Init()!
+			std::string gestBasePath = (std::string)g_SteamPathStr + "/steamapps/common/SteamVR/drivers/FlatVR/Resources/Custom_Gestures/";
+			
+			// Check which key the user pressed
+			if (IsKeyDown(KEY_ID_GESTURE_CUSTOM_5)) {
+				LoadGestureSequence(gestBasePath + "5.gesture");
+				if (!ActiveSequence.empty()) CurrentStepIndex = 0;
+			}
+			else if (IsKeyDown(KEY_ID_GESTURE_CUSTOM_6)) {
+				LoadGestureSequence(gestBasePath + "6.gesture");
+				if (!ActiveSequence.empty()) CurrentStepIndex = 0;
+			}
+			else if (IsKeyDown(KEY_ID_GESTURE_CUSTOM_7)) {
+				LoadGestureSequence(gestBasePath + "7.gesture");
+				if (!ActiveSequence.empty()) CurrentStepIndex = 0;
+			}
+			else if (IsKeyDown(KEY_ID_GESTURE_CUSTOM_8)) {
+				LoadGestureSequence(gestBasePath + "8.gesture");
+				if (!ActiveSequence.empty()) CurrentStepIndex = 0;
+			}
+			else if (IsKeyDown(KEY_ID_GESTURE_CUSTOM_9)) {
+				LoadGestureSequence(gestBasePath + "9.gesture");
+				if (!ActiveSequence.empty()) CurrentStepIndex = 0;
+			}
+			else if (IsKeyDown(KEY_ID_GESTURE_CUSTOM_0)) {
+				LoadGestureSequence(gestBasePath + "0.gesture");
+				if (!ActiveSequence.empty()) CurrentStepIndex = 0;
+			}
+			
+			// If we just started an animation, reset all offsets to zero
+			if (CurrentStepIndex == 0) {
+				StepTimer = 0.0;
+				SeqOffsetL[0] = SeqOffsetL[1] = SeqOffsetL[2] = 0;
+				SeqOffsetR[0] = SeqOffsetR[1] = SeqOffsetR[2] = 0;
+				SeqRotL[0] = SeqRotL[1] = SeqRotL[2] = 0;
+				SeqRotR[0] = SeqRotR[1] = SeqRotR[2] = 0;
+				SeqGripL = SeqGripR = SeqTrigL = SeqTrigR = false;
+			}
+		}
+	}
+
+	// 2. Process the sequence if we are currently playing one
+	if (CurrentStepIndex >= 0 && CurrentStepIndex < ActiveSequence.size()) {
+		GestureStep& step = ActiveSequence[CurrentStepIndex];
+		StepTimer += dt; // Add frame time
+
+		// Calculate progress (0.0 to 1.0) so the movement is smooth, not instant
+		double progress = StepTimer / step.duration;
+		if (progress > 1.0) progress = 1.0;
+
+		// Execute the command based on what was read from the text file
+		if (step.command == "MOVE") {
+			if (step.target == "L" || step.target == "B") {
+				if (step.axis == "X") SeqOffsetL[0] = step.value * progress;
+				if (step.axis == "Y") SeqOffsetL[1] = step.value * progress;
+				if (step.axis == "Z") SeqOffsetL[2] = step.value * progress;
+			}
+			if (step.target == "R" || step.target == "B") {
+				if (step.axis == "X") SeqOffsetR[0] = step.value * progress;
+				if (step.axis == "Y") SeqOffsetR[1] = step.value * progress;
+				if (step.axis == "Z") SeqOffsetR[2] = step.value * progress;
+			}
+		}
+		else if (step.command == "ROTATE") {
+			if (step.target == "L" || step.target == "B") {
+				if (step.axis == "YAW") SeqRotL[0] = step.value * progress;
+				if (step.axis == "PITCH") SeqRotL[1] = step.value * progress;
+				if (step.axis == "ROLL") SeqRotL[2] = step.value * progress;
+			}
+			if (step.target == "R" || step.target == "B") {
+				if (step.axis == "YAW") SeqRotR[0] = step.value * progress;
+				if (step.axis == "PITCH") SeqRotR[1] = step.value * progress;
+				if (step.axis == "ROLL") SeqRotR[2] = step.value * progress;
+			}
+		}
+		else if (step.command == "BUTTON") {
+			bool btnState = step.value > 0.0;
+			if (step.target == "L" || step.target == "B") {
+				if (step.axis == "GRIP") SeqGripL = btnState;
+				if (step.axis == "TRIG") SeqTrigL = btnState;
+			}
+			if (step.target == "R" || step.target == "B") {
+				if (step.axis == "GRIP") SeqGripR = btnState;
+				if (step.axis == "TRIG") SeqTrigR = btnState;
+			}
+		}
+
+		// Move to the next step when the timer exceeds the duration
+		if (StepTimer >= step.duration) {
+			StepTimer = 0.0;
+			CurrentStepIndex++;
+			
+			// If we just finished the last step, clean up all the offsets!
+			if (CurrentStepIndex >= ActiveSequence.size()) {
+				CurrentStepIndex = -1; // Animation finished
+				
+				// Reset position offsets back to 0
+				SeqOffsetL[0] = SeqOffsetL[1] = SeqOffsetL[2] = 0;
+				SeqOffsetR[0] = SeqOffsetR[1] = SeqOffsetR[2] = 0;
+				
+				// Reset rotation offsets back to 0
+				SeqRotL[0] = SeqRotL[1] = SeqRotL[2] = 0;
+				SeqRotR[0] = SeqRotR[1] = SeqRotR[2] = 0;
+				
+				// Force release any buttons the script might have left held
+				SeqGripL = SeqGripR = SeqTrigL = SeqTrigR = false;
+			}
+		}
+	}
+
+	// 3. Apply the animation offsets to the physical controllers
+	// Note: We use += so it adds to whatever the player is already doing (moving mouse, crouching, etc)
+	// We translate the local X (left/right) and Y (forward/back) into world coordinates based on your camera's yaw!
+	double gestMoveX_L = SeqOffsetL[0] * cos(yawRad) + SeqOffsetL[1] * sin(yawRad);
+	double gestMoveY_L = -SeqOffsetL[0] * sin(yawRad) + SeqOffsetL[1] * cos(yawRad);
+	
+	FirstController->X += gestMoveX_L; 
+	FirstController->Y += gestMoveY_L; 
+	FirstController->Z += SeqOffsetL[2];
+	
+	FirstController->Yaw += SeqRotL[0]; FirstController->Pitch += SeqRotL[1]; FirstController->Roll += SeqRotL[2];
+	if (SeqGripL) FirstController->Buttons |= GRIP_BTN;
+	if (SeqTrigL) FirstController->Trigger = 1.0f;
+
+	double gestMoveX_R = SeqOffsetR[0] * cos(yawRad) + SeqOffsetR[1] * sin(yawRad);
+	double gestMoveY_R = -SeqOffsetR[0] * sin(yawRad) + SeqOffsetR[1] * cos(yawRad);
+	
+	SecondController->X += gestMoveX_R; 
+	SecondController->Y += gestMoveY_R; 
+	SecondController->Z += SeqOffsetR[2];
+	
+	SecondController->Yaw += SeqRotR[0]; SecondController->Pitch += SeqRotR[1]; SecondController->Roll += SeqRotR[2];
+	if (SeqGripR) SecondController->Buttons |= GRIP_BTN;
+	if (SeqTrigR) SecondController->Trigger = 1.0f;
+	// =========================================================================================
+
 	FirstController->Yaw = FirstController->Yaw * -1; FirstController->Pitch = FirstController->Pitch * -1;
 	SecondController->Yaw = SecondController->Yaw * -1; SecondController->Pitch = SecondController->Pitch * -1;
 
@@ -976,6 +1182,9 @@ EVRInitError CServerDriver_Sample::Init(vr::IVRDriverContext* pDriverContext)
 	if (status == ERROR_SUCCESS) { ULONG regSize = sizeof(steamPath); status = key.QueryStringValue(_T("SteamPath"), steamPath, &regSize); }
 	key.Close();
 
+	// Save the path dynamically for the gesture engine
+	g_SteamPathStr = std::string(steamPath);
+
 	TCHAR configPath[MAX_PATH] = { 0 };
 	_tcscat_s(configPath, sizeof(configPath), steamPath);
 	_tcscat_s(configPath, sizeof(configPath), _T("/steamapps/common/SteamVR/drivers/FlatVR/FlatVR.ini"));
@@ -1038,6 +1247,14 @@ EVRInitError CServerDriver_Sample::Init(vr::IVRDriverContext* pDriverContext)
 	KEY_ID_LEFT_B = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT_B", "X"));
 	KEY_ID_RIGHT_A = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_A", "C"));
 	KEY_ID_RIGHT_B = KeyNameToKeyCode(IniFile.ReadString("Keys", "RIGHT_B", "V"));
+
+	// Load the custom gesture trigger keys (5, 6, 7, 8, 9, 0)
+	KEY_ID_GESTURE_CUSTOM_5 = KeyNameToKeyCode(IniFile.ReadString("Keys", "GESTURE_CUSTOM_5", "5"));
+	KEY_ID_GESTURE_CUSTOM_6 = KeyNameToKeyCode(IniFile.ReadString("Keys", "GESTURE_CUSTOM_6", "6"));
+	KEY_ID_GESTURE_CUSTOM_7 = KeyNameToKeyCode(IniFile.ReadString("Keys", "GESTURE_CUSTOM_7", "7"));
+	KEY_ID_GESTURE_CUSTOM_8 = KeyNameToKeyCode(IniFile.ReadString("Keys", "GESTURE_CUSTOM_8", "8"));
+	KEY_ID_GESTURE_CUSTOM_9 = KeyNameToKeyCode(IniFile.ReadString("Keys", "GESTURE_CUSTOM_9", "9"));
+	KEY_ID_GESTURE_CUSTOM_0 = KeyNameToKeyCode(IniFile.ReadString("Keys", "GESTURE_CUSTOM_0", "0"));
 
 	std::string modeStr;
 	modeStr = IniFile.ReadString("Modes", "LEFT_TRIGGER_MODE", "HOLD"); Btn_LeftTrigger.isToggle = (modeStr == "TOGGLE");
